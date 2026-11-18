@@ -1,5 +1,7 @@
 import express from "express";
+import cors from "cors";
 import "dotenv/config";
+import { MongoClient } from "mongodb";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -34,6 +36,24 @@ async function connectToMongoDB() {
 
   return db;
 }
+
+// --------------------------------------------------
+// MIDDLEWARE
+// --------------------------------------------------
+
+app.use(cors());
+app.use(express.json());
+
+// --------------------------------------------------
+// ROUTES
+// --------------------------------------------------
+
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "Salon Book server is running!",
+  });
+});
 
 // --------------------------------------------------
 // SERVER STARTUP
