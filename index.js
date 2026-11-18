@@ -1,8 +1,14 @@
 import express from "express";
 import "dotenv/config";
 
+
 const PORT = process.env.PORT || 5000;
 
+
+
+// --------------------------------------------------
+// SERVER STARTUP
+// --------------------------------------------------
 
 async function startServer() {
   try {
