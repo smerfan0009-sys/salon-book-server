@@ -1,7 +1,8 @@
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
-import { MongoClient } from "mongodb";
+import { connectToMongoDB, getDb } from "./db.js";
+import uploadRoutes from "./routes/upload.js";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -9,40 +10,28 @@ import { MongoClient } from "mongodb";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 
 // --------------------------------------------------
 // MONGODB CONNECTION
 // --------------------------------------------------
-
-let db = null;
-
-async function connectToMongoDB() {
-  const { MONGODB_URI, DB_USER, DB_PASSWORD } = process.env;
-
-  if (!MONGODB_URI && (!DB_USER || !DB_PASSWORD)) {
-    console.warn("MongoDB is not configured. Skipping database connection.");
-    return null;
-  }
-
-  const uri =
-    MONGODB_URI ||
-    `mongodb+srv://${encodeURIComponent(DB_USER)}:${encodeURIComponent(DB_PASSWORD)}@cluster0.cdjo897.mongodb.net/salon-book`;
-
-  const client = new MongoClient(uri);
-  await client.connect();
-
-  db = client.db("salon-book");
-  console.log("Connected to MongoDB (salon-book)");
-
-  return db;
-}
+// Connection logic lives in ./db.js (shared module, same behavior as
+// before) so Better Auth can reuse the same connection and database.
 
 // --------------------------------------------------
 // MIDDLEWARE
 // --------------------------------------------------
 
-app.use(cors());
-app.use(express.json());
+// Better Auth handles its own body parsing for /api/auth/*, so its handler
+// is mounted BEFORE express.json() (see startServer).
+// CORS extended to accept the Next.js client with credentials (required
+// for cookie-based auth). All other origins are rejected.
+app.use(
+  cors({
+    origin: CLIENT_URL,
+    credentials: true,
+  })
+);
 
 // --------------------------------------------------
 // ROUTES
@@ -66,6 +55,21 @@ async function startServer() {
     console.error("MongoDB connection failed:", error.message);
     console.error("Starting the server without a database connection.");
   }
+
+  // Mount Better Auth only when the database is available.
+  // Mounted before express.json() because Better Auth parses its own body.
+  if (getDb()) {
+    const { getAuth } = await import("./auth.js");
+    const { toNodeHandler } = await import("better-auth/node");
+    const auth = getAuth();
+    app.all("/api/auth/*splat", toNodeHandler(auth));
+    app.use("/api/upload", uploadRoutes);
+    console.log("Better Auth mounted at /api/auth/*");
+  } else {
+    console.warn("Better Auth is NOT mounted (no database connection).");
+  }
+
+  app.use(express.json());
 
   app.listen(PORT, () => {
     console.log(`Salon Book server is running at http://localhost:${PORT}`);
