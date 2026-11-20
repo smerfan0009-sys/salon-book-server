@@ -3,6 +3,7 @@ import cors from "cors";
 import "dotenv/config";
 import { connectToMongoDB, getDb } from "./db.js";
 import uploadRoutes from "./routes/upload.js";
+import serviceRoutes from "./routes/services.js";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -12,20 +13,6 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 
-// --------------------------------------------------
-// MONGODB CONNECTION
-// --------------------------------------------------
-// Connection logic lives in ./db.js (shared module, same behavior as
-// before) so Better Auth can reuse the same connection and database.
-
-// --------------------------------------------------
-// MIDDLEWARE
-// --------------------------------------------------
-
-// Better Auth handles its own body parsing for /api/auth/*, so its handler
-// is mounted BEFORE express.json() (see startServer).
-// CORS extended to accept the Next.js client with credentials (required
-// for cookie-based auth). All other origins are rejected.
 app.use(
   cors({
     origin: CLIENT_URL,
@@ -70,6 +57,9 @@ async function startServer() {
   }
 
   app.use(express.json());
+
+  // Public service routes (the route returns 503 if MongoDB is unavailable).
+  app.use("/api/services", serviceRoutes);
 
   app.listen(PORT, () => {
     console.log(`Salon Book server is running at http://localhost:${PORT}`);
