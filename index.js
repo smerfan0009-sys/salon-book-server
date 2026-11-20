@@ -8,6 +8,7 @@ import uploadRoutes from "./routes/upload.js";
 import serviceRoutes from "./routes/services.js";
 import appointmentRoutes, { ensureAppointmentIndexes } from "./routes/appointments.js";
 import adminRoutes from "./routes/admin.js";
+import profileRoutes from "./routes/profile.js";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -90,6 +91,7 @@ async function startServer() {
   app.use("/api/services", serviceRoutes);
   app.use("/api/appointments", appointmentRoutes);
   app.use("/api/admin", adminRoutes);
+  app.use("/api/profile", profileRoutes);
 
   if (getDb()) {
     try {

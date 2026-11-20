@@ -98,6 +98,17 @@ router.get("/", requireAuth, requireCustomer, async (req, res) => {
       })
       .toArray();
 
+    const serviceIds = appointments
+      .map((appointment) => appointment.serviceId)
+      .filter(Boolean);
+    const services = serviceIds.length
+      ? await db.collection("services").find(
+          { _id: { $in: serviceIds } },
+          { projection: { serviceName: 1, category: 1, image: 1, price: 1, duration: 1 } },
+        ).toArray()
+      : [];
+    const serviceMap = new Map(services.map((service) => [String(service._id), service]));
+
     return res.status(200).json({
       success: true,
       count: appointments.length,
@@ -105,6 +116,9 @@ router.get("/", requireAuth, requireCustomer, async (req, res) => {
         ...appointment,
         _id: appointment._id.toString(),
         serviceId: appointment.serviceId.toString(),
+        service: serviceMap.get(String(appointment.serviceId))
+          ? { ...serviceMap.get(String(appointment.serviceId)), _id: String(appointment.serviceId) }
+          : null,
       })),
     });
   } catch (error) {

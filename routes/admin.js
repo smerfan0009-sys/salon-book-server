@@ -76,6 +76,21 @@ router.get("/overview", async (req, res) => {
   }
 });
 
+// Existing, provider-created transaction documents only. This endpoint never
+// changes payment state and intentionally returns an empty list when no
+// payment integration has written records yet.
+router.get("/transactions", async (_req, res) => {
+  try {
+    const db = getDb();
+    if (!db) return res.status(503).json({ success: false, message: "Database is not connected." });
+    const transactions = await db.collection("transactions").find({}).sort({ createdAt: -1, transactionDate: -1 }).limit(500).toArray();
+    return res.json({ success: true, count: transactions.length, data: transactions.map((transaction) => ({ ...transaction, _id: String(transaction._id), appointmentId: transaction.appointmentId ? String(transaction.appointmentId) : null, customerId: transaction.customerId ? String(transaction.customerId) : null })) });
+  } catch (error) {
+    console.error("Admin transactions error:", error);
+    return res.status(500).json({ success: false, message: "Failed to load transactions." });
+  }
+});
+
 // --------------------------------------------------
 // GET ALL USERS
 // GET /api/admin/users
