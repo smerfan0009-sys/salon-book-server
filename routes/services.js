@@ -3,15 +3,131 @@ import { getDb } from "../db.js";
 
 const router = Router();
 
-const FEATURED_SERVICES_LIMIT = 6;
+// --------------------------------------------------
+// HELPERS
+// --------------------------------------------------
+
+function createSlug(value) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
 
 // --------------------------------------------------
-// GET FEATURED SERVICES (PUBLIC)
+// GET SERVICE CATEGORIES (PUBLIC)
 // --------------------------------------------------
-// Returns up to six active services ordered by their featured position.
-// No authentication is required because the Home Page is public.
 
-router.get("/featured", async (req, res) => {
+router.get("/categories", async (req, res) => {
+  try {
+    const db = getDb();
+
+    if (!db) {
+      return res.status(503).json({
+        success: false,
+        message: "Service temporarily unavailable: database is not connected.",
+      });
+    }
+
+    const pipeline = [
+      {
+        $match: {
+          isActive: true,
+          category: {
+            $type: "string",
+            $ne: "",
+          },
+        },
+      },
+      {
+        $addFields: {
+          normalizedCategory: {
+            $trim: {
+              input: "$category",
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          normalizedCategory: {
+            $ne: "",
+          },
+        },
+      },
+      {
+        $sort: {
+          normalizedCategory: 1,
+          featuredOrder: 1,
+          createdAt: -1,
+          _id: 1,
+        },
+      },
+      {
+        $group: {
+          _id: "$normalizedCategory",
+          serviceCount: {
+            $sum: 1,
+          },
+          image: {
+            $first: "$image",
+          },
+          description: {
+            $first: {
+              $ifNull: ["$shortDescription", "$description"],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          name: "$_id",
+          image: 1,
+          description: 1,
+          serviceCount: 1,
+        },
+      },
+      {
+        $sort: {
+          name: 1,
+        },
+      },
+    ];
+
+    const categories = await db
+      .collection("services")
+      .aggregate(pipeline)
+      .toArray();
+
+    const data = categories.map((category) => ({
+      ...category,
+      slug: createSlug(category.name),
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: "Service categories retrieved successfully.",
+      count: data.length,
+      data,
+    });
+  } catch (error) {
+    console.error("Service categories fetch error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while retrieving service categories.",
+    });
+  }
+});
+
+// --------------------------------------------------
+// GET ALL ACTIVE SERVICES (PUBLIC)
+// --------------------------------------------------
+
+router.get("/", async (req, res) => {
   try {
     const db = getDb();
 
@@ -25,7 +141,9 @@ router.get("/featured", async (req, res) => {
     const services = await db
       .collection("services")
       .find(
-        { isActive: true },
+        {
+          isActive: true,
+        },
         {
           projection: {
             name: 1,
@@ -37,24 +155,26 @@ router.get("/featured", async (req, res) => {
             duration: 1,
             featuredOrder: 1,
           },
-        }
+        },
       )
-      .sort({ featuredOrder: 1, createdAt: -1 })
-      .limit(FEATURED_SERVICES_LIMIT)
+      .sort({
+        featuredOrder: 1,
+        createdAt: -1,
+      })
       .toArray();
 
     return res.status(200).json({
       success: true,
-      message: "Featured services retrieved successfully.",
+      message: "Services retrieved successfully.",
       count: services.length,
       data: services,
     });
   } catch (error) {
-    console.error("Featured services fetch error:", error);
+    console.error("Services fetch error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Internal server error while retrieving featured services.",
+      message: "Internal server error while retrieving services.",
     });
   }
 });
