@@ -143,3 +143,22 @@ export function requireAdmin(req, res, next) {
 
   next();
 }
+
+export function requireCustomer(req, res, next) {
+  if (!req.user) {
+    // requireAuth must run first in the chain.
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized: missing user context.",
+    });
+  }
+
+  if (req.user.role !== "customer") {
+    return res.status(403).json({
+      success: false,
+      message: "Forbidden: customer access required.",
+    });
+  }
+
+  next();
+}
