@@ -3,6 +3,7 @@ import cors from "cors";
 import "dotenv/config";
 import { connectToMongoDB, getDb } from "./db.js";
 import uploadRoutes from "./routes/upload.js";
+import serviceRoutes from "./routes/services.js";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -70,6 +71,9 @@ async function startServer() {
   }
 
   app.use(express.json());
+
+  // Public service routes (the route returns 503 if MongoDB is unavailable).
+  app.use("/api/services", serviceRoutes);
 
   app.listen(PORT, () => {
     console.log(`Salon Book server is running at http://localhost:${PORT}`);
