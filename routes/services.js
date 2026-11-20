@@ -1,5 +1,7 @@
 import { Router } from "express";
+import { ObjectId } from "mongodb";
 import { getDb } from "../db.js";
+import { requireAuth } from "../middleware/requireAuth.js";
 
 const router = Router();
 
@@ -34,7 +36,7 @@ router.get("/categories", async (req, res) => {
     const pipeline = [
       {
         $match: {
-          isActive: true,
+          status: "active",
           category: {
             $type: "string",
             $ne: "",
@@ -75,9 +77,7 @@ router.get("/categories", async (req, res) => {
             $first: "$image",
           },
           description: {
-            $first: {
-              $ifNull: ["$shortDescription", "$description"],
-            },
+            $first: "$description",
           },
         },
       },
@@ -142,17 +142,19 @@ router.get("/", async (req, res) => {
       .collection("services")
       .find(
         {
-          isActive: true,
+          status: "active",
         },
         {
           projection: {
-            name: 1,
+            serviceName: 1,
             slug: 1,
             category: 1,
+            description: 1,
             image: 1,
-            shortDescription: 1,
             price: 1,
             duration: 1,
+            status: 1,
+            createdAt: 1,
             featuredOrder: 1,
           },
         },
@@ -176,6 +178,33 @@ router.get("/", async (req, res) => {
       success: false,
       message: "Internal server error while retrieving services.",
     });
+  }
+});
+
+// Protected details endpoint. Inactive services remain visible to signed-in
+// users, but appointment creation separately requires an active service.
+router.get("/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  if (!/^[a-f\d]{24}$/i.test(id)) {
+    return res.status(400).json({ success: false, message: "The service ID is not valid." });
+  }
+
+  try {
+    const db = getDb();
+    if (!db) {
+      return res.status(503).json({ success: false, message: "Service temporarily unavailable: database is not connected." });
+    }
+    const service = await db.collection("services").findOne(
+      { _id: new ObjectId(id) },
+      { projection: { serviceName: 1, slug: 1, category: 1, description: 1, image: 1, price: 1, duration: 1, status: 1, createdAt: 1, featuredOrder: 1 } },
+    );
+    if (!service) {
+      return res.status(404).json({ success: false, message: "This service doesn't exist or was removed." });
+    }
+    return res.json({ success: true, message: "Service retrieved successfully.", data: service });
+  } catch (error) {
+    console.error("Service details fetch error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error while retrieving service." });
   }
 });
 

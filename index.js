@@ -6,6 +6,7 @@ import { connectToMongoDB, getDb } from "./db.js";
 
 import uploadRoutes from "./routes/upload.js";
 import serviceRoutes from "./routes/services.js";
+import appointmentRoutes, { ensureAppointmentIndexes } from "./routes/appointments.js";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -80,12 +81,21 @@ async function startServer() {
   app.use(express.json());
 
   // --------------------------------------------------
-  // PUBLIC SERVICE ROUTES
+  // SERVICE + APPOINTMENT ROUTES
   // --------------------------------------------------
   // GET /api/services/
   // GET /api/services/categories
 
   app.use("/api/services", serviceRoutes);
+  app.use("/api/appointments", appointmentRoutes);
+
+  if (getDb()) {
+    try {
+      await ensureAppointmentIndexes();
+    } catch (error) {
+      console.error("Appointment index setup failed:", error.message);
+    }
+  }
 
   // --------------------------------------------------
   // START SERVER
