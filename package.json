@@ -8,8 +8,7 @@
                     "dev":  "nodemon index.js",
                     "start":  "node index.js",
                     "make-admin":  "node scripts/make-admin.mjs",
-                    "inspect-users":  "node scripts/inspect-users.mjs",
-                    "seed-services":  "node scripts/seed-services.mjs"
+                    "inspect-users":  "node scripts/inspect-users.mjs"
                 },
     "keywords":  [
 

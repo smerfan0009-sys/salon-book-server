@@ -13,20 +13,6 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 
-// --------------------------------------------------
-// MONGODB CONNECTION
-// --------------------------------------------------
-// Connection logic lives in ./db.js (shared module, same behavior as
-// before) so Better Auth can reuse the same connection and database.
-
-// --------------------------------------------------
-// MIDDLEWARE
-// --------------------------------------------------
-
-// Better Auth handles its own body parsing for /api/auth/*, so its handler
-// is mounted BEFORE express.json() (see startServer).
-// CORS extended to accept the Next.js client with credentials (required
-// for cookie-based auth). All other origins are rejected.
 app.use(
   cors({
     origin: CLIENT_URL,
