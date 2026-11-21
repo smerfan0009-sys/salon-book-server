@@ -90,6 +90,7 @@ router.get("/", requireAuth, requireCustomer, async (req, res) => {
       .collection("appointments")
       .find({
         customerId: req.user.id,
+        status: { $ne: "Completed" },
       })
       .sort({
         appointmentDate: 1,
@@ -240,6 +241,112 @@ router.post("/", requireAuth, requireCustomer, async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal server error while creating appointment.",
+    });
+  }
+});
+
+// Customers may complete their own paid, confirmed appointments after the visit date.
+router.patch("/:id/complete", requireAuth, requireCustomer, async (req, res) => {
+  try {
+    const appointmentId = getAppointmentId(req.params.id);
+    const { rating, comment } = req.body ?? {};
+
+    if (!appointmentId) return badRequest(res, "Invalid appointment ID.");
+    if (
+      rating !== undefined &&
+      (!Number.isInteger(rating) || rating < 1 || rating > 5)
+    ) {
+      return badRequest(res, "Rating must be an integer between 1 and 5.");
+    }
+    if (comment !== undefined && typeof comment !== "string") {
+      return badRequest(res, "Feedback comment must be text.");
+    }
+
+    const trimmedComment = typeof comment === "string" ? comment.trim() : "";
+    if (trimmedComment.length > 500) {
+      return badRequest(res, "Feedback comment must be 500 characters or fewer.");
+    }
+
+    const db = getDb();
+    if (!db) {
+      return res.status(503).json({
+        success: false,
+        message: "Database is not connected.",
+      });
+    }
+
+    const appointment = await db.collection("appointments").findOne({
+      _id: appointmentId,
+      customerId: req.user.id,
+    });
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found.",
+      });
+    }
+    if (
+      appointment.status !== "Confirmed" ||
+      appointment.paymentStatus !== "Paid"
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "Only confirmed and paid appointments can be completed.",
+      });
+    }
+
+    const todayInDhaka = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Asia/Dhaka",
+    });
+    if (appointment.appointmentDate > todayInDhaka) {
+      return res.status(409).json({
+        success: false,
+        message: "You can mark this complete on or after the appointment date.",
+      });
+    }
+
+    const now = new Date();
+    const set = {
+      status: "Completed",
+      completedAt: now,
+      completedBy: req.user.id,
+      updatedAt: now,
+    };
+    if (rating !== undefined || trimmedComment) {
+      set.feedback = {
+        rating: rating ?? null,
+        comment: trimmedComment,
+        createdAt: now,
+      };
+    }
+
+    const result = await db.collection("appointments").findOneAndUpdate(
+      {
+        _id: appointmentId,
+        customerId: req.user.id,
+        status: "Confirmed",
+        paymentStatus: "Paid",
+      },
+      { $set: set },
+      { returnDocument: "after" },
+    );
+    if (!result) {
+      return res.status(409).json({
+        success: false,
+        message: "This appointment is no longer eligible to be completed.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Appointment marked as completed.",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Customer appointment completion error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while completing appointment.",
     });
   }
 });

@@ -45,6 +45,7 @@ router.get("/overview", async (req, res) => {
       pendingAppointments,
       confirmedAppointments,
       cancelledAppointments,
+      completedAppointments,
       blockedUsers,
     ] = await Promise.all([
       users.countDocuments({}),
@@ -52,6 +53,7 @@ router.get("/overview", async (req, res) => {
       appointments.countDocuments({ status: "Pending" }),
       appointments.countDocuments({ status: "Confirmed" }),
       appointments.countDocuments({ status: "Cancelled" }),
+      appointments.countDocuments({ status: "Completed" }),
       users.countDocuments({ isBlocked: true }),
     ]);
 
@@ -63,6 +65,7 @@ router.get("/overview", async (req, res) => {
         pendingAppointments,
         confirmedAppointments,
         cancelledAppointments,
+        completedAppointments,
         blockedUsers,
       },
     });
