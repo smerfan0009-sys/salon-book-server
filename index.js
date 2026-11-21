@@ -9,6 +9,7 @@ import serviceRoutes from "./routes/services.js";
 import appointmentRoutes, { ensureAppointmentIndexes } from "./routes/appointments.js";
 import adminRoutes from "./routes/admin.js";
 import profileRoutes from "./routes/profile.js";
+import paymentRoutes from "./routes/payments.js";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -77,6 +78,13 @@ async function startServer() {
   }
 
   // --------------------------------------------------
+  // STRIPE WEBHOOK (raw body for signature verification)
+  // Must be mounted BEFORE express.json().
+  // --------------------------------------------------
+
+  app.use("/api/payments/webhook", express.raw({ type: "application/json" }), paymentRoutes);
+
+  // --------------------------------------------------
   // JSON MIDDLEWARE
   // --------------------------------------------------
 
@@ -90,11 +98,13 @@ async function startServer() {
   app.use("/api/services", serviceRoutes);
   app.use("/api/appointments", appointmentRoutes);
   app.use("/api/admin", adminRoutes);
+  app.use("/api/payments", paymentRoutes);
   app.use("/api/profile", profileRoutes);
 
   if (getDb()) {
     try {
       await ensureAppointmentIndexes();
+      await ensurePaymentIndexes();
     } catch (error) {
       console.error("Appointment index setup failed:", error.message);
     }

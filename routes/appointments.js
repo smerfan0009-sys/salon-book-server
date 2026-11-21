@@ -205,11 +205,14 @@ router.post("/", requireAuth, requireCustomer, async (req, res) => {
       });
     }
 
+    const servicePrice = service.price ?? 0;
+
     const now = new Date();
     const appointment = {
       customerId: req.user.id,
       serviceId: parsedServiceId,
       serviceName: service.serviceName ?? "Salon Service",
+      servicePrice,
       appointmentDate: requestedDate,
       timeSlot: requestedTime,
       additionalMessage: typeof message === "string" ? message.trim() : "",

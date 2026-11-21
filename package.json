@@ -1,34 +1,32 @@
-﻿{
-    "name":  "salon-book-server",
-    "version":  "1.0.0",
-    "description":  "",
-    "main":  "index.js",
-    "scripts":  {
-                    "test":  "echo \"Error: no test specified\" && exit 1",
-                    "dev":  "nodemon index.js",
-                    "start":  "node index.js",
-                    "make-admin":  "node scripts/make-admin.mjs",
-                    "inspect-users":  "node scripts/inspect-users.mjs"
-                },
-    "keywords":  [
-
-                 ],
-    "author":  "",
-    "license":  "ISC",
-    "type":  "module",
-    "dependencies":  {
-                         "@better-auth/mongo-adapter":  "^1.7.25",
-                         "better-auth":  "^1.7.25",
-                         "cors":  "^2.8.6",
-                         "dotenv":  "^18.0.10",
-                         "express":  "^5.3.0",
-                         "jose":  "^6.2.17",
-                         "mongodb":  "^7.9.0",
-                         "multer":  "^2.5.0",
-                         "stripe":  "^23.1.0"
-                     },
-    "devDependencies":  {
-                            "@better-auth/cli":  "^1.4.22",
-                            "nodemon":  "^3.1.14"
-                        }
+{
+    "name": "salon-book-server",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "dev": "nodemon index.js",
+        "start": "node index.js",
+        "make-admin": "node scripts/make-admin.mjs",
+        "inspect-users": "node scripts/inspect-users.mjs"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "type": "module",
+    "dependencies": {
+        "@better-auth/mongo-adapter": "^1.7.25",
+        "better-auth": "^1.7.25",
+        "cors": "^2.8.6",
+        "dotenv": "^18.0.10",
+        "express": "^5.3.0",
+        "jose": "^6.2.17",
+        "mongodb": "^7.9.0",
+        "multer": "^2.5.0",
+        "stripe": "^23.2.0"
+    },
+    "devDependencies": {
+        "@better-auth/cli": "^1.4.22",
+        "nodemon": "^3.1.14"
+    }
 }
