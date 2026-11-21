@@ -102,12 +102,25 @@ router.get("/", requireAuth, requireCustomer, async (req, res) => {
       .map((appointment) => appointment.serviceId)
       .filter(Boolean);
     const services = serviceIds.length
-      ? await db.collection("services").find(
-          { _id: { $in: serviceIds } },
-          { projection: { serviceName: 1, category: 1, image: 1, price: 1, duration: 1 } },
-        ).toArray()
+      ? await db
+          .collection("services")
+          .find(
+            { _id: { $in: serviceIds } },
+            {
+              projection: {
+                serviceName: 1,
+                category: 1,
+                image: 1,
+                price: 1,
+                duration: 1,
+              },
+            },
+          )
+          .toArray()
       : [];
-    const serviceMap = new Map(services.map((service) => [String(service._id), service]));
+    const serviceMap = new Map(
+      services.map((service) => [String(service._id), service]),
+    );
 
     return res.status(200).json({
       success: true,
@@ -117,7 +130,10 @@ router.get("/", requireAuth, requireCustomer, async (req, res) => {
         _id: appointment._id.toString(),
         serviceId: appointment.serviceId.toString(),
         service: serviceMap.get(String(appointment.serviceId))
-          ? { ...serviceMap.get(String(appointment.serviceId)), _id: String(appointment.serviceId) }
+          ? {
+              ...serviceMap.get(String(appointment.serviceId)),
+              _id: String(appointment.serviceId),
+            }
           : null,
       })),
     });
@@ -171,13 +187,10 @@ router.post("/", requireAuth, requireCustomer, async (req, res) => {
 
     const db = getDb();
     if (!db)
-      return res
-        .status(503)
-        .json({
-          success: false,
-          message:
-            "Service temporarily unavailable: database is not connected.",
-        });
+      return res.status(503).json({
+        success: false,
+        message: "Service temporarily unavailable: database is not connected.",
+      });
 
     const service = await db
       .collection("services")
@@ -186,13 +199,10 @@ router.post("/", requireAuth, requireCustomer, async (req, res) => {
         { projection: { serviceName: 1, price: 1, duration: 1 } },
       );
     if (!service) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message:
-            "This service is inactive or no longer available for booking.",
-        });
+      return res.status(409).json({
+        success: false,
+        message: "This service is inactive or no longer available for booking.",
+      });
     }
 
     const now = new Date();
@@ -217,21 +227,17 @@ router.post("/", requireAuth, requireCustomer, async (req, res) => {
     });
   } catch (error) {
     if (error?.code === 11000) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message:
-            "That time slot is already booked for this service. Please choose another slot.",
-        });
+      return res.status(409).json({
+        success: false,
+        message:
+          "That time slot is already booked for this service. Please choose another slot.",
+      });
     }
     console.error("Appointment creation error:", error);
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Internal server error while creating appointment.",
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while creating appointment.",
+    });
   }
 });
 
@@ -255,13 +261,10 @@ router.patch("/:id/cancel", requireAuth, requireCustomer, async (req, res) => {
         { returnDocument: "after" },
       );
     if (!result)
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message:
-            "Only your own pending appointment requests can be cancelled.",
-        });
+      return res.status(403).json({
+        success: false,
+        message: "Only your own pending appointment requests can be cancelled.",
+      });
     return res.json({
       success: true,
       message: "Appointment request cancelled.",
@@ -269,14 +272,99 @@ router.patch("/:id/cancel", requireAuth, requireCustomer, async (req, res) => {
     });
   } catch (error) {
     console.error("Customer appointment cancellation error:", error);
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Internal server error while cancelling appointment.",
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while cancelling appointment.",
+    });
   }
 });
+
+// Customer can delete their own cancelled appointment history
+router.delete(
+  "/:id/history",
+  requireAuth,
+  requireCustomer,
+  async (req, res) => {
+    try {
+      const appointmentId = getAppointmentId(req.params.id);
+
+      if (!appointmentId) {
+        return badRequest(res, "Invalid appointment ID.");
+      }
+
+      const db = getDb();
+
+      if (!db) {
+        return res.status(503).json({
+          success: false,
+          message: "Database is not connected.",
+        });
+      }
+
+      const result = await db.collection("appointments").deleteOne({
+        _id: appointmentId,
+        customerId: req.user.id,
+        status: "Cancelled",
+      });
+
+      if (!result.deletedCount) {
+        return res.status(404).json({
+          success: false,
+          message: "Cancelled appointment history not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Appointment history deleted successfully.",
+      });
+    } catch (error) {
+      console.error("Delete appointment history error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete appointment history.",
+      });
+    }
+  },
+);
+
+// Customer can delete all their cancelled appointment history
+router.delete(
+  "/history/cancelled",
+  requireAuth,
+  requireCustomer,
+  async (req, res) => {
+    try {
+      const db = getDb();
+
+      if (!db) {
+        return res.status(503).json({
+          success: false,
+          message: "Database is not connected.",
+        });
+      }
+
+      const result = await db.collection("appointments").deleteMany({
+        customerId: req.user.id,
+        status: "Cancelled",
+      });
+
+      return res.json({
+        success: true,
+        message: `${result.deletedCount} cancelled appointment history record(s) deleted successfully.`,
+        deletedCount: result.deletedCount,
+      });
+    } catch (error) {
+      console.error("Delete all appointment history error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete appointment history.",
+      });
+    }
+  },
+);
 
 // Admins can confirm or cancel requests; customer ownership is never accepted from the client.
 router.patch("/:id/status", requireAuth, requireAdmin, async (req, res) => {
@@ -307,12 +395,10 @@ router.patch("/:id/status", requireAuth, requireAdmin, async (req, res) => {
         { returnDocument: "after" },
       );
     if (!result)
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message: "Only pending appointment requests can be updated.",
-        });
+      return res.status(409).json({
+        success: false,
+        message: "Only pending appointment requests can be updated.",
+      });
     return res.json({
       success: true,
       message: `Appointment ${status.toLowerCase()}.`,
@@ -320,13 +406,96 @@ router.patch("/:id/status", requireAuth, requireAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error("Admin appointment status error:", error);
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Internal server error while updating appointment.",
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while updating appointment.",
+    });
   }
 });
+// Admin can delete ANY customer's cancelled appointment history (all customers)
+// Static route first, then the :id route
+router.delete(
+  "/admin/history/cancelled",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const db = getDb();
+
+      if (!db) {
+        return res.status(503).json({
+          success: false,
+          message: "Database is not connected.",
+        });
+      }
+
+      const result = await db
+        .collection("appointments")
+        .deleteMany({ status: "Cancelled" });
+
+      return res.json({
+        success: true,
+        message: `${result.deletedCount} cancelled appointment history record(s) deleted successfully.`,
+        deletedCount: result.deletedCount,
+      });
+    } catch (error) {
+      console.error("Admin delete all appointment history error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete appointment history.",
+      });
+    }
+  },
+);
+
+// Admin can delete one cancelled appointment history
+router.delete(
+  "/admin/:id/history",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const appointmentId = getAppointmentId(req.params.id);
+
+      if (!appointmentId) {
+        return badRequest(res, "Invalid appointment ID.");
+      }
+
+      const db = getDb();
+
+      if (!db) {
+        return res.status(503).json({
+          success: false,
+          message: "Database is not connected.",
+        });
+      }
+
+      const result = await db.collection("appointments").deleteOne({
+        _id: appointmentId,
+        status: "Cancelled",
+      });
+
+      if (!result.deletedCount) {
+        return res.status(404).json({
+          success: false,
+          message: "Cancelled appointment history not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Appointment history deleted successfully.",
+      });
+    } catch (error) {
+      console.error("Admin delete appointment history error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete appointment history.",
+      });
+    }
+  },
+);
 
 export default router;

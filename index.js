@@ -85,8 +85,7 @@ async function startServer() {
   // --------------------------------------------------
   // SERVICE + APPOINTMENT ROUTES + admin routes
   // --------------------------------------------------
-  // GET /api/services/
-  // GET /api/services/categories
+
 
   app.use("/api/services", serviceRoutes);
   app.use("/api/appointments", appointmentRoutes);
