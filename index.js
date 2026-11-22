@@ -6,10 +6,15 @@ import { connectToMongoDB, getDb } from "./db.js";
 
 import uploadRoutes from "./routes/upload.js";
 import serviceRoutes from "./routes/services.js";
-import appointmentRoutes, { ensureAppointmentIndexes } from "./routes/appointments.js";
+import appointmentRoutes, {
+  ensureAppointmentIndexes,
+} from "./routes/appointments.js";
 import adminRoutes from "./routes/admin.js";
 import profileRoutes from "./routes/profile.js";
-import paymentRoutes from "./routes/payments.js";
+import paymentRoutes, {
+  handleStripeWebhook,
+  ensurePaymentIndexes,
+} from "./routes/payments.js";
 
 // --------------------------------------------------
 // CONFIGURATION
@@ -30,6 +35,22 @@ app.use(
     credentials: true,
   }),
 );
+
+// --------------------------------------------------
+// WAIT FOR STARTUP (needed on Vercel)
+// --------------------------------------------------
+// Routes are mounted inside the async startServer() below. On Vercel a
+// request can arrive before that finishes (cold start), so every request
+// waits here until startup is done. `ready` is assigned at the bottom.
+
+app.use(async (req, res, next) => {
+  try {
+    await ready;
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 // --------------------------------------------------
 // ROOT ROUTE
@@ -82,7 +103,11 @@ async function startServer() {
   // Must be mounted BEFORE express.json().
   // --------------------------------------------------
 
-  app.use("/api/payments/webhook", express.raw({ type: "application/json" }), paymentRoutes);
+  app.post(
+    "/api/payments/webhook",
+    express.raw({ type: "application/json" }),
+    handleStripeWebhook,
+  );
 
   // --------------------------------------------------
   // JSON MIDDLEWARE
@@ -93,7 +118,6 @@ async function startServer() {
   // --------------------------------------------------
   // SERVICE + APPOINTMENT ROUTES + admin routes
   // --------------------------------------------------
-
 
   app.use("/api/services", serviceRoutes);
   app.use("/api/appointments", appointmentRoutes);
@@ -106,19 +130,27 @@ async function startServer() {
       await ensureAppointmentIndexes();
       await ensurePaymentIndexes();
     } catch (error) {
-      console.error("Appointment index setup failed:", error.message);
+      console.error("Index setup failed:", error.message);
     }
   }
 
   // --------------------------------------------------
-  // START SERVER
+  // START SERVER (local only; Vercel runs the exported app itself)
   // --------------------------------------------------
 
-  app.listen(PORT, () => {
-    console.log(`Salon Book server is running at http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, () => {
+      console.log(`Salon Book server is running at http://localhost:${PORT}`);
+    });
+  }
 }
 
-startServer();
+const ready = startServer();
+
+// Log startup failures without crashing; requests still get an error via the
+// middleware above.
+ready.catch((error) => {
+  console.error("Server startup failed:", error);
+});
 
 export default app;

@@ -9,6 +9,15 @@ import {
 
 const router = Router();
 const ACTIVE_APPOINTMENT_STATUSES = ["Pending", "Confirmed"];
+
+// Admin can permanently delete history of these statuses only.
+// URL param (lowercase) -> stored status value.
+const ADMIN_DELETABLE_HISTORY = {
+  cancelled: "Cancelled",
+  completed: "Completed",
+};
+const ADMIN_DELETABLE_STATUSES = Object.values(ADMIN_DELETABLE_HISTORY);
+
 const TIME_SLOTS = new Set([
   "10:00",
   "10:30",
@@ -246,110 +255,119 @@ router.post("/", requireAuth, requireCustomer, async (req, res) => {
 });
 
 // Customers may complete their own paid, confirmed appointments after the visit date.
-router.patch("/:id/complete", requireAuth, requireCustomer, async (req, res) => {
-  try {
-    const appointmentId = getAppointmentId(req.params.id);
-    const { rating, comment } = req.body ?? {};
+router.patch(
+  "/:id/complete",
+  requireAuth,
+  requireCustomer,
+  async (req, res) => {
+    try {
+      const appointmentId = getAppointmentId(req.params.id);
+      const { rating, comment } = req.body ?? {};
 
-    if (!appointmentId) return badRequest(res, "Invalid appointment ID.");
-    if (
-      rating !== undefined &&
-      (!Number.isInteger(rating) || rating < 1 || rating > 5)
-    ) {
-      return badRequest(res, "Rating must be an integer between 1 and 5.");
-    }
-    if (comment !== undefined && typeof comment !== "string") {
-      return badRequest(res, "Feedback comment must be text.");
-    }
+      if (!appointmentId) return badRequest(res, "Invalid appointment ID.");
+      if (
+        rating !== undefined &&
+        (!Number.isInteger(rating) || rating < 1 || rating > 5)
+      ) {
+        return badRequest(res, "Rating must be an integer between 1 and 5.");
+      }
+      if (comment !== undefined && typeof comment !== "string") {
+        return badRequest(res, "Feedback comment must be text.");
+      }
 
-    const trimmedComment = typeof comment === "string" ? comment.trim() : "";
-    if (trimmedComment.length > 500) {
-      return badRequest(res, "Feedback comment must be 500 characters or fewer.");
-    }
+      const trimmedComment = typeof comment === "string" ? comment.trim() : "";
+      if (trimmedComment.length > 500) {
+        return badRequest(
+          res,
+          "Feedback comment must be 500 characters or fewer.",
+        );
+      }
 
-    const db = getDb();
-    if (!db) {
-      return res.status(503).json({
-        success: false,
-        message: "Database is not connected.",
-      });
-    }
+      const db = getDb();
+      if (!db) {
+        return res.status(503).json({
+          success: false,
+          message: "Database is not connected.",
+        });
+      }
 
-    const appointment = await db.collection("appointments").findOne({
-      _id: appointmentId,
-      customerId: req.user.id,
-    });
-    if (!appointment) {
-      return res.status(404).json({
-        success: false,
-        message: "Appointment not found.",
-      });
-    }
-    if (
-      appointment.status !== "Confirmed" ||
-      appointment.paymentStatus !== "Paid"
-    ) {
-      return res.status(409).json({
-        success: false,
-        message: "Only confirmed and paid appointments can be completed.",
-      });
-    }
-
-    const todayInDhaka = new Date().toLocaleDateString("en-CA", {
-      timeZone: "Asia/Dhaka",
-    });
-    if (appointment.appointmentDate > todayInDhaka) {
-      return res.status(409).json({
-        success: false,
-        message: "You can mark this complete on or after the appointment date.",
-      });
-    }
-
-    const now = new Date();
-    const set = {
-      status: "Completed",
-      completedAt: now,
-      completedBy: req.user.id,
-      updatedAt: now,
-    };
-    if (rating !== undefined || trimmedComment) {
-      set.feedback = {
-        rating: rating ?? null,
-        comment: trimmedComment,
-        createdAt: now,
-      };
-    }
-
-    const result = await db.collection("appointments").findOneAndUpdate(
-      {
+      const appointment = await db.collection("appointments").findOne({
         _id: appointmentId,
         customerId: req.user.id,
-        status: "Confirmed",
-        paymentStatus: "Paid",
-      },
-      { $set: set },
-      { returnDocument: "after" },
-    );
-    if (!result) {
-      return res.status(409).json({
+      });
+      if (!appointment) {
+        return res.status(404).json({
+          success: false,
+          message: "Appointment not found.",
+        });
+      }
+      if (
+        appointment.status !== "Confirmed" ||
+        appointment.paymentStatus !== "Paid"
+      ) {
+        return res.status(409).json({
+          success: false,
+          message: "Only confirmed and paid appointments can be completed.",
+        });
+      }
+
+      const todayInDhaka = new Date().toLocaleDateString("en-CA", {
+        timeZone: "Asia/Dhaka",
+      });
+      if (appointment.appointmentDate > todayInDhaka) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "You can mark this complete on or after the appointment date.",
+        });
+      }
+
+      const now = new Date();
+      const set = {
+        status: "Completed",
+        completedAt: now,
+        completedBy: req.user.id,
+        updatedAt: now,
+      };
+      if (rating !== undefined || trimmedComment) {
+        set.feedback = {
+          rating: rating ?? null,
+          comment: trimmedComment,
+          createdAt: now,
+        };
+      }
+
+      const result = await db.collection("appointments").findOneAndUpdate(
+        {
+          _id: appointmentId,
+          customerId: req.user.id,
+          status: "Confirmed",
+          paymentStatus: "Paid",
+        },
+        { $set: set },
+        { returnDocument: "after" },
+      );
+      if (!result) {
+        return res.status(409).json({
+          success: false,
+          message: "This appointment is no longer eligible to be completed.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Appointment marked as completed.",
+        data: result,
+      });
+    } catch (error) {
+      console.error("Customer appointment completion error:", error);
+      return res.status(500).json({
         success: false,
-        message: "This appointment is no longer eligible to be completed.",
+        message: "Internal server error while completing appointment.",
       });
     }
-
-    return res.json({
-      success: true,
-      message: "Appointment marked as completed.",
-      data: result,
-    });
-  } catch (error) {
-    console.error("Customer appointment completion error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error while completing appointment.",
-    });
-  }
-});
+  },
+);
 
 // Customers may only cancel their own pending requests.
 router.patch("/:id/cancel", requireAuth, requireCustomer, async (req, res) => {
@@ -522,14 +540,27 @@ router.patch("/:id/status", requireAuth, requireAdmin, async (req, res) => {
     });
   }
 });
-// Admin can delete ANY customer's cancelled appointment history (all customers)
+
+// Admin can delete ALL customers' Cancelled or Completed appointment history.
+//   DELETE /api/appointments/admin/history/cancelled
+//   DELETE /api/appointments/admin/history/completed
 // Static route first, then the :id route
 router.delete(
-  "/admin/history/cancelled",
+  "/admin/history/:status",
   requireAuth,
   requireAdmin,
   async (req, res) => {
     try {
+      const status =
+        ADMIN_DELETABLE_HISTORY[String(req.params.status).toLowerCase()];
+
+      if (!status) {
+        return badRequest(
+          res,
+          "History type must be either cancelled or completed.",
+        );
+      }
+
       const db = getDb();
 
       if (!db) {
@@ -539,13 +570,11 @@ router.delete(
         });
       }
 
-      const result = await db
-        .collection("appointments")
-        .deleteMany({ status: "Cancelled" });
+      const result = await db.collection("appointments").deleteMany({ status });
 
       return res.json({
         success: true,
-        message: `${result.deletedCount} cancelled appointment history record(s) deleted successfully.`,
+        message: `${result.deletedCount} ${status.toLowerCase()} appointment history record(s) deleted successfully.`,
         deletedCount: result.deletedCount,
       });
     } catch (error) {
@@ -559,7 +588,7 @@ router.delete(
   },
 );
 
-// Admin can delete one cancelled appointment history
+// Admin can delete one Cancelled or Completed appointment history
 router.delete(
   "/admin/:id/history",
   requireAuth,
@@ -583,13 +612,13 @@ router.delete(
 
       const result = await db.collection("appointments").deleteOne({
         _id: appointmentId,
-        status: "Cancelled",
+        status: { $in: ADMIN_DELETABLE_STATUSES },
       });
 
       if (!result.deletedCount) {
         return res.status(404).json({
           success: false,
-          message: "Cancelled appointment history not found.",
+          message: "Cancelled or completed appointment history not found.",
         });
       }
 
