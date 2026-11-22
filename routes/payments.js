@@ -26,63 +26,111 @@ function getAppointmentId(value) {
 // SHARED HELPERS (used by the webhook AND the verify route)
 // --------------------------------------------------
 
-// Saves one transaction record per Stripe session. Safe to call many times:
-// the unique index on stripeSessionId turns duplicates into a no-op.
-async function recordTransaction(db, session, status) {
-  const appointmentId = getAppointmentId(session.metadata?.appointmentId);
-  if (!appointmentId) return;
-
-  const appointment = await db
-    .collection("appointments")
-    .findOne({ _id: appointmentId }, { projection: { customerId: 1 } });
-
+// Stores one transaction per Stripe Checkout session. The unique session index
+// and upsert make retries idempotent while allowing a later verified success
+// event to replace an earlier failed/pending state for the same session.
+async function recordTransaction(db, session, appointment, status) {
+  const appointmentId = appointment._id;
   const now = new Date();
-
   try {
-    await db.collection("transactions").insertOne({
-      appointmentId,
-      customerId: appointment?.customerId ?? "",
-      amount: (session.amount_total ?? 0) / 100,
-      currency: session.currency || "usd",
-      stripeSessionId: session.id,
-      transactionId:
-        typeof session.payment_intent === "string"
-          ? session.payment_intent
-          : session.id,
-      paymentMethod: "card",
-      status,
-      paymentStatus: status,
-      transactionDate: now,
-      createdAt: now,
-    });
+    await db.collection("transactions").updateOne(
+      { stripeSessionId: session.id },
+      {
+        $set: {
+          appointmentId,
+          customerId: appointment.customerId,
+          amount: (session.amount_total ?? 0) / 100,
+          currency: session.currency || "usd",
+          transactionId:
+            typeof session.payment_intent === "string"
+              ? session.payment_intent
+              : session.id,
+          paymentMethod: "card",
+          status,
+          paymentStatus: status,
+          transactionDate: now,
+          updatedAt: now,
+        },
+        $setOnInsert: { createdAt: now },
+      },
+      { upsert: true },
+    );
   } catch (error) {
+    // Concurrent delivery can race an upsert against the unique session
+    // index. The other verified delivery already owns the record.
     if (error?.code !== 11000) throw error;
-    // Duplicate session: already recorded, ignore.
   }
 }
 
-// Marks the appointment as Paid + records the transaction.
-// Idempotent: running it twice changes nothing the second time.
-async function fulfillPaidSession(db, session) {
+async function getVerifiedAppointment(db, session) {
   const appointmentId = getAppointmentId(session.metadata?.appointmentId);
+  const expectedCustomerId = session.metadata?.customerId;
+  if (!appointmentId || typeof expectedCustomerId !== "string") return null;
 
-  if (!appointmentId || session.payment_status !== "paid") return false;
+  const appointment = await db.collection("appointments").findOne({
+    _id: appointmentId,
+    customerId: expectedCustomerId,
+  });
+  return appointment ?? null;
+}
 
-  await recordTransaction(db, session, "paid");
+// Marks the appointment as Paid only after a verified webhook event. The
+// filter protects the transition against concurrent events and stale sessions.
+async function fulfillPaidSession(db, session) {
+  if (session.payment_status !== "paid") return false;
 
-  await db.collection("appointments").updateOne(
-    { _id: appointmentId, paymentStatus: { $ne: "Paid" } },
+  const appointment = await getVerifiedAppointment(db, session);
+  if (!appointment || appointment.status !== "Confirmed") return false;
+
+  if (
+    appointment.paymentStatus === "Paid" &&
+    appointment.stripeSessionId === session.id
+  ) {
+    await recordTransaction(db, session, appointment, "paid");
+    return true;
+  }
+  if (appointment.paymentStatus === "Paid") return false;
+
+  const now = new Date();
+  const updated = await db.collection("appointments").findOneAndUpdate(
+    {
+      _id: appointment._id,
+      customerId: appointment.customerId,
+      status: "Confirmed",
+      paymentStatus: "Unpaid",
+    },
     {
       $set: {
         paymentStatus: "Paid",
-        paidAt: new Date(),
-        updatedAt: new Date(),
+        stripeSessionId: session.id,
+        paidAt: now,
+        updatedAt: now,
       },
     },
+    { returnDocument: "after" },
   );
+  if (!updated) return false;
 
+  await recordTransaction(db, session, updated, "paid");
   return true;
 }
+
+async function recordFailedSession(db, session) {
+  const appointment = await getVerifiedAppointment(db, session);
+  if (!appointment || appointment.paymentStatus === "Paid") return false;
+  await recordTransaction(db, session, appointment, "failed");
+  return true;
+}
+
+export function verifyStripeWebhookEvent(payload, signature, endpointSecret) {
+  return stripe.webhooks.constructEvent(payload, signature, endpointSecret);
+}
+
+/*
+ * Checkout sessions are created from server-owned appointment data. Metadata
+ * repeats the trusted owner ID so webhook and status reads can validate the
+ * relationship without trusting any browser input.
+ */
 
 // --------------------------------------------------
 // POST /api/payments/checkout (auth + customer)
@@ -163,6 +211,7 @@ router.post("/checkout", requireAuth, requireCustomer, async (req, res) => {
       ],
       metadata: {
         appointmentId: String(appointment._id),
+        customerId: req.user.id,
       },
       success_url: `${CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${CLIENT_URL}/payment/cancel`,
@@ -201,7 +250,7 @@ export async function handleStripeWebhook(req, res) {
 
   let event;
   try {
-    event = stripe.webhooks.constructEvent(req.body, signature, endpointSecret);
+    event = verifyStripeWebhookEvent(req.body, signature, endpointSecret);
   } catch (error) {
     console.error("Webhook signature verification failed:", error.message);
     return res
@@ -235,7 +284,7 @@ export async function handleStripeWebhook(req, res) {
 
       case "checkout.session.async_payment_failed":
       case "checkout.session.expired": {
-        await recordTransaction(db, event.data.object, "failed");
+        await recordFailedSession(db, event.data.object);
         break;
       }
 
@@ -257,9 +306,8 @@ export async function handleStripeWebhook(req, res) {
 
 // --------------------------------------------------
 // GET /api/payments/session/:sessionId
-// Called by the payment success page. Verifies the session directly with
-// Stripe and marks the appointment Paid if it was paid, so payments still
-// work even when the webhook is not running (e.g. local development).
+// Called by the payment success page. This endpoint is read-only: Stripe's
+// webhook is the sole authority that may mark an appointment as paid.
 // --------------------------------------------------
 
 router.get(
@@ -281,33 +329,31 @@ router.get(
       );
 
       const appointmentId = getAppointmentId(session.metadata?.appointmentId);
-
-      let appointmentPaymentStatus = null;
-
-      if (appointmentId) {
-        // Only the owner of the appointment can verify / fulfil it.
-        const appointment = await db
-          .collection("appointments")
-          .findOne({ _id: appointmentId, customerId: req.user.id });
-
-        if (appointment) {
-          if (
-            session.payment_status === "paid" &&
-            appointment.paymentStatus !== "Paid"
-          ) {
-            await fulfillPaidSession(db, session);
-            appointmentPaymentStatus = "Paid";
-          } else {
-            appointmentPaymentStatus = appointment.paymentStatus;
-          }
-        }
+      if (
+        !appointmentId ||
+        session.metadata?.customerId !== req.user.id
+      ) {
+        return res.status(404).json({
+          success: false,
+          message: "Payment session not found.",
+        });
+      }
+      const appointment = await db.collection("appointments").findOne({
+        _id: appointmentId,
+        customerId: req.user.id,
+      });
+      if (!appointment) {
+        return res.status(404).json({
+          success: false,
+          message: "Payment session not found.",
+        });
       }
 
       return res.json({
         success: true,
         data: {
           paymentStatus: session.payment_status,
-          appointmentPaymentStatus,
+          appointmentPaymentStatus: appointment.paymentStatus,
         },
       });
     } catch (error) {

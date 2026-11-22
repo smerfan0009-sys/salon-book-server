@@ -38,35 +38,46 @@ router.get("/overview", async (req, res) => {
 
     const users = db.collection("users");
     const appointments = db.collection("appointments");
+    const services = db.collection("services");
+    const transactions = db.collection("transactions");
 
     const [
-      totalUsers,
+      totalCustomers,
+      totalActiveServices,
       totalAppointments,
       pendingAppointments,
       confirmedAppointments,
       cancelledAppointments,
       completedAppointments,
       blockedUsers,
+      totalSuccessfulPayments,
     ] = await Promise.all([
-      users.countDocuments({}),
+      users.countDocuments({ role: "customer" }),
+      services.countDocuments({ status: "active" }),
       appointments.countDocuments({}),
       appointments.countDocuments({ status: "Pending" }),
       appointments.countDocuments({ status: "Confirmed" }),
       appointments.countDocuments({ status: "Cancelled" }),
       appointments.countDocuments({ status: "Completed" }),
       users.countDocuments({ isBlocked: true }),
+      transactions.countDocuments({
+        $or: [{ paymentStatus: "paid" }, { status: "paid" }],
+      }),
     ]);
 
     return res.json({
       success: true,
       data: {
-        totalUsers,
+        totalUsers: totalCustomers,
+        totalCustomers,
+        totalActiveServices,
         totalAppointments,
         pendingAppointments,
         confirmedAppointments,
         cancelledAppointments,
         completedAppointments,
         blockedUsers,
+        totalSuccessfulPayments,
       },
     });
   } catch (error) {
@@ -87,7 +98,55 @@ router.get("/transactions", async (_req, res) => {
     const db = getDb();
     if (!db) return res.status(503).json({ success: false, message: "Database is not connected." });
     const transactions = await db.collection("transactions").find({}).sort({ createdAt: -1, transactionDate: -1 }).limit(500).toArray();
-    return res.json({ success: true, count: transactions.length, data: transactions.map((transaction) => ({ ...transaction, _id: String(transaction._id), appointmentId: transaction.appointmentId ? String(transaction.appointmentId) : null, customerId: transaction.customerId ? String(transaction.customerId) : null })) });
+    const appointmentIds = transactions
+      .map((transaction) => transaction.appointmentId)
+      .filter((id) => id instanceof ObjectId);
+    const appointments = appointmentIds.length
+      ? await db.collection("appointments").find(
+          { _id: { $in: appointmentIds } },
+          { projection: { customerId: 1, serviceId: 1, appointmentDate: 1 } },
+        ).toArray()
+      : [];
+    const appointmentMap = new Map(appointments.map((appointment) => [String(appointment._id), appointment]));
+    const serviceIds = appointments.map((appointment) => appointment.serviceId).filter(Boolean);
+    const services = serviceIds.length
+      ? await db.collection("services").find(
+          { _id: { $in: serviceIds } },
+          { projection: { serviceName: 1 } },
+        ).toArray()
+      : [];
+    const serviceMap = new Map(services.map((service) => [String(service._id), service]));
+    const customerIds = [...new Set(transactions.map((transaction) => {
+      const appointment = appointmentMap.get(String(transaction.appointmentId));
+      return String(appointment?.customerId ?? transaction.customerId ?? "");
+    }).filter(Boolean))];
+    const users = customerIds.length
+      ? await db.collection("users").find(
+          { $or: [{ _id: { $in: customerIds } }, { _id: { $in: customerIds.filter((id) => /^[a-f\d]{24}$/i.test(id)).map((id) => new ObjectId(id)) } }] },
+          { projection: { name: 1, email: 1 } },
+        ).toArray()
+      : [];
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    const data = transactions.map((transaction) => {
+      const appointment = appointmentMap.get(String(transaction.appointmentId));
+      const customer = userMap.get(String(appointment?.customerId ?? transaction.customerId));
+      const service = serviceMap.get(String(appointment?.serviceId));
+      return {
+        _id: String(transaction._id),
+        appointmentId: transaction.appointmentId ? String(transaction.appointmentId) : null,
+        customer: customer
+          ? { name: customer.name ?? "Unknown User", email: customer.email ?? "" }
+          : { name: "Deleted user", email: "" },
+        service: { name: service?.serviceName ?? "Deleted service" },
+        appointmentDate: appointment?.appointmentDate ?? null,
+        amount: transaction.amount ?? null,
+        currency: transaction.currency ?? "usd",
+        stripeSessionId: transaction.stripeSessionId ?? null,
+        paymentStatus: transaction.paymentStatus ?? transaction.status ?? "unknown",
+        transactionDate: transaction.transactionDate ?? transaction.createdAt ?? null,
+      };
+    });
+    return res.json({ success: true, count: data.length, data });
   } catch (error) {
     console.error("Admin transactions error:", error);
     return res.status(500).json({ success: false, message: "Failed to load transactions." });

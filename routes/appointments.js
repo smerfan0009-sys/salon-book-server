@@ -42,6 +42,14 @@ const TIME_SLOTS = new Set([
 ]);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
+const ADMIN_STATUS_TRANSITIONS = {
+  Confirmed: ["Pending"],
+  Cancelled: ["Pending", "Confirmed"],
+};
+
+export function allowedAdminCurrentStatuses(nextStatus) {
+  return ADMIN_STATUS_TRANSITIONS[nextStatus] ?? null;
+}
 
 function badRequest(res, message) {
   return res.status(400).json({ success: false, message });
@@ -99,7 +107,6 @@ router.get("/", requireAuth, requireCustomer, async (req, res) => {
       .collection("appointments")
       .find({
         customerId: req.user.id,
-        status: { $ne: "Completed" },
       })
       .sort({
         appointmentDate: 1,
@@ -500,16 +507,27 @@ router.patch("/:id/status", requireAuth, requireAdmin, async (req, res) => {
     const appointmentId = getAppointmentId(req.params.id);
     const { status } = req.body ?? {};
     if (!appointmentId) return badRequest(res, "Invalid appointment ID.");
-    if (!["Confirmed", "Cancelled"].includes(status)) {
+    const allowedCurrentStatuses = allowedAdminCurrentStatuses(status);
+    if (!allowedCurrentStatuses) {
       return badRequest(
         res,
         "Appointment status must be Confirmed or Cancelled.",
       );
     }
-    const result = await getDb()
+    const db = getDb();
+    if (!db) {
+      return res.status(503).json({
+        success: false,
+        message: "Database is not connected.",
+      });
+    }
+    const result = await db
       .collection("appointments")
       .findOneAndUpdate(
-        { _id: appointmentId, status: "Pending" },
+        {
+          _id: appointmentId,
+          status: { $in: allowedCurrentStatuses },
+        },
         {
           $set: {
             status,
@@ -525,7 +543,10 @@ router.patch("/:id/status", requireAuth, requireAdmin, async (req, res) => {
     if (!result)
       return res.status(409).json({
         success: false,
-        message: "Only pending appointment requests can be updated.",
+        message:
+          status === "Confirmed"
+            ? "Only pending appointment requests can be confirmed."
+            : "Only pending or confirmed appointments can be cancelled.",
       });
     return res.json({
       success: true,

@@ -18,6 +18,24 @@ function createSlug(value) {
     .replace(/^-|-$/g, "");
 }
 
+function parseFinitePositiveNumber(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  if (
+    typeof value !== "string" ||
+    !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value.trim())
+  ) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // --------------------------------------------------
 // GET SERVICE CATEGORIES (PUBLIC)
 // --------------------------------------------------
@@ -138,12 +156,24 @@ router.get("/", async (req, res) => {
       });
     }
 
+    const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const category =
+      typeof req.query.category === "string" ? req.query.category.trim() : "";
+    const sort = typeof req.query.sort === "string" ? req.query.sort : "";
+    const filter = { status: "active" };
+    if (query) filter.serviceName = { $regex: escapeRegExp(query), $options: "i" };
+    if (category) filter.category = { $regex: `^${escapeRegExp(category)}$`, $options: "i" };
+    const order =
+      sort === "price_asc"
+        ? { price: 1, serviceName: 1 }
+        : sort === "price_desc"
+          ? { price: -1, serviceName: 1 }
+          : { featuredOrder: 1, createdAt: -1 };
+
     const services = await db
       .collection("services")
       .find(
-        {
-          status: "active",
-        },
+        filter,
         {
           projection: {
             serviceName: 1,
@@ -159,10 +189,7 @@ router.get("/", async (req, res) => {
           },
         },
       )
-      .sort({
-        featuredOrder: 1,
-        createdAt: -1,
-      })
+      .sort(order)
       .toArray();
 
     return res.status(200).json({
@@ -256,8 +283,8 @@ function normalizeServiceInput(body = {}) {
   const description =
     typeof body.description === "string" ? body.description.trim() : "";
   const image = typeof body.image === "string" ? body.image.trim() : "";
-  const price = Number(body.price);
-  const duration = Number(body.duration);
+  const price = parseFinitePositiveNumber(body.price);
+  const duration = parseFinitePositiveNumber(body.duration);
   const status =
     body.status === "inactive"
       ? "inactive"
@@ -279,8 +306,8 @@ function normalizeServiceInput(body = {}) {
     return {
       error: "Description is required and must be 2,000 characters or fewer.",
     };
-  if (!Number.isFinite(price) || price < 0)
-    return { error: "Price must be a valid non-negative number." };
+  if (price === null)
+    return { error: "Price must be a finite number greater than zero." };
   if (!Number.isInteger(duration) || duration < 5 || duration > 1440)
     return { error: "Duration must be between 5 and 1,440 minutes." };
   if (!slug) return { error: "A valid slug is required." };
@@ -495,10 +522,18 @@ router.delete("/manage/:id", requireAuth, requireAdmin, async (req, res) => {
       });
     }
 
-    // Permanently delete all related appointment history
-    const appointmentResult = await db.collection("appointments").deleteMany({
+    // Never erase appointment history as a side effect of service management.
+    // Services with history can be deactivated through the status endpoint.
+    const appointmentCount = await db.collection("appointments").countDocuments({
       serviceId: id,
     });
+    if (appointmentCount > 0) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This service has appointment history and cannot be deleted. Deactivate it instead.",
+      });
+    }
 
     // Delete the service
     const serviceResult = await db.collection("services").deleteOne({
@@ -514,8 +549,7 @@ router.delete("/manage/:id", requireAuth, requireAdmin, async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Service and related appointment history deleted successfully.",
-      deletedAppointments: appointmentResult.deletedCount,
+      message: "Service deleted successfully.",
     });
   } catch (error) {
     console.error("Delete service error:", error);
