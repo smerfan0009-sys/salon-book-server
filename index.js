@@ -23,7 +23,13 @@ import paymentRoutes, {
 const app = express();
 
 const PORT = process.env.PORT || 5000;
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+const CLIENT_URL = (process.env.CLIENT_URL || "http://localhost:3000")
+  .trim()
+  .replace(/\/+$/, "");
+const CORS_ORIGINS = [CLIENT_URL, "http://localhost:3000"];
+
+// Vercel and the Next.js rewrite proxy forward the original request details.
+app.set("trust proxy", 1);
 
 // --------------------------------------------------
 // MIDDLEWARE
@@ -31,7 +37,7 @@ const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 
 app.use(
   cors({
-    origin: CLIENT_URL,
+    origin: CORS_ORIGINS,
     credentials: true,
   }),
 );

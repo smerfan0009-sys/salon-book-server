@@ -8,6 +8,9 @@ const router = Router();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-12-18.acacia",
 });
+const CLIENT_URL = (process.env.CLIENT_URL || "http://localhost:3000")
+  .trim()
+  .replace(/\/+$/, "");
 
 function badRequest(res, message) {
   return res.status(400).json({ success: false, message });
@@ -161,8 +164,8 @@ router.post("/checkout", requireAuth, requireCustomer, async (req, res) => {
       metadata: {
         appointmentId: String(appointment._id),
       },
-      success_url: `${process.env.CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/payment/cancel`,
+      success_url: `${CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${CLIENT_URL}/payment/cancel`,
     });
 
     return res.status(200).json({

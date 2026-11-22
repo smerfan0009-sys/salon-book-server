@@ -10,8 +10,14 @@ import { connectToMongoDB } from "./db.js";
 // Reuses the SAME MongoDB connection/database as the rest of the app.
 // Better Auth owns: login, registration, sessions, Google OAuth, JWKS.
 
-const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL || "http://localhost:5000";
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+const BETTER_AUTH_URL = (process.env.BETTER_AUTH_URL || "http://localhost:5000")
+  .trim()
+  .replace(/\/+$/, "");
+const CLIENT_URL = (process.env.CLIENT_URL || "http://localhost:3000")
+  .trim()
+  .replace(/\/+$/, "");
+const useSecureCookies =
+  process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
 
 // Connect (or reuse the cached connection from db.js).
 // Top-level await so the CLI and the server both get a ready db.
@@ -38,7 +44,13 @@ export const auth = betterAuth({
   appName: "SalonBook",
   baseURL: BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
-  trustedOrigins: [CLIENT_URL],
+  trustedOrigins: [CLIENT_URL, "http://localhost:3000"],
+  advanced: {
+    useSecureCookies,
+    defaultCookieAttributes: {
+      sameSite: "lax",
+    },
+  },
 
   // Reuse existing database "salon-book"; the users collection is
   // explicitly named "users" per project requirements.
